@@ -4,11 +4,12 @@ from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
 
-import sys
+import sys, os
 import numpy as np
 from fairmotion.viz import camera, utils
 
 from PIL import Image
+
 
 class Viewer:
     """Viewer class builds general infrastructure to implement visualizer
@@ -35,8 +36,13 @@ class Viewer:
     """
 
     def __init__(
-        self, title="glutgui_base", cam=None, size=(800, 600),
-        bgcolor=[1.0, 1.0, 1.0, 1.0], use_msaa=False, mouse_sensitivity=0.005,
+        self,
+        title="glutgui_base",
+        cam=None,
+        size=(800, 600),
+        bgcolor=[1.0, 1.0, 1.0, 1.0],
+        use_msaa=False,
+        mouse_sensitivity=0.005,
     ):
         self.title = title
         self.window = None
@@ -58,6 +64,8 @@ class Viewer:
         else:
             self.cam_cur = cam
 
+        self.should_exit = False
+
     def idle_callback(self):
         pass
 
@@ -77,6 +85,16 @@ class Viewer:
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
+        # SM) Better Quality
+        if not self.use_msaa:
+            glEnable(GL_MULTISAMPLE)
+            glEnable(GL_LINE_SMOOTH)
+            glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+            glEnable(GL_POINT_SMOOTH)
+            glHint(GL_POINT_SMOOTH_HINT, GL_NICEST)
+            glEnable(GL_POLYGON_SMOOTH)
+            glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST)
+
         glEnable(GL_DITHER)
         glShadeModel(GL_SMOOTH)
         glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST)
@@ -84,11 +102,7 @@ class Viewer:
         glDepthFunc(GL_LEQUAL)
         glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST)
 
-        glClearColor(
-            self.bgcolor[0], 
-            self.bgcolor[1], 
-            self.bgcolor[2], 
-            self.bgcolor[3])
+        glClearColor(self.bgcolor[0], self.bgcolor[1], self.bgcolor[2], self.bgcolor[3])
         glClear(GL_COLOR_BUFFER_BIT)
 
         ambient = [0.2, 0.2, 0.2, 1.0]
@@ -143,14 +157,16 @@ class Viewer:
 
         if self.use_msaa:
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.msaa_fbo)
-        
+
         # Clear The Screen And The Depth Buffer
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         gluLookAt(
-            *self.cam_cur.pos, *self.cam_cur.origin, *self.cam_cur.vup,
+            *self.cam_cur.pos,
+            *self.cam_cur.origin,
+            *self.cam_cur.vup,
         )
 
         self.render_callback()
@@ -162,9 +178,7 @@ class Viewer:
             glMatrixMode(GL_PROJECTION)
             glPushMatrix()
             glLoadIdentity()
-            glOrtho(
-                0.0, self.window_size[0], self.window_size[1], 0.0, 0.0, 1.0
-            )
+            glOrtho(0.0, self.window_size[0], self.window_size[1], 0.0, 0.0, 1.0)
 
             glMatrixMode(GL_MODELVIEW)
             glPushMatrix()
@@ -185,32 +199,58 @@ class Viewer:
     def _init_msaa(self):
         num_samples = glGetIntegerv(GL_MAX_SAMPLES)
 
-        print('num_samples_for_msaa:', num_samples)
+        print("num_samples_for_msaa:", num_samples)
 
         self.msaa_tex = glGenTextures(1)
-        print('msaa_tex:', self.msaa_tex)
+        print("msaa_tex:", self.msaa_tex)
         glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, self.msaa_tex)
         glTexImage2DMultisample(
-            GL_TEXTURE_2D_MULTISAMPLE, num_samples, GL_RGBA8, self.window_size[0], self.window_size[1], False)
+            GL_TEXTURE_2D_MULTISAMPLE,
+            num_samples,
+            GL_RGBA8,
+            self.window_size[0],
+            self.window_size[1],
+            False,
+        )
 
         self.msaa_rbo_color = glGenRenderbuffers(1)
-        print('msaa_rbo_color:', self.msaa_rbo_color)
+        print("msaa_rbo_color:", self.msaa_rbo_color)
         glBindRenderbuffer(GL_RENDERBUFFER, self.msaa_rbo_color)
         glRenderbufferStorageMultisample(
-            GL_RENDERBUFFER, num_samples, GL_RGBA8, self.window_size[0], self.window_size[1])
+            GL_RENDERBUFFER,
+            num_samples,
+            GL_RGBA8,
+            self.window_size[0],
+            self.window_size[1],
+        )
 
         self.msaa_rbo_depth = glGenRenderbuffers(1)
-        print('msaa_rbo_depth:', self.msaa_rbo_depth)
+        print("msaa_rbo_depth:", self.msaa_rbo_depth)
         glBindRenderbuffer(GL_RENDERBUFFER, self.msaa_rbo_depth)
         glRenderbufferStorageMultisample(
-            GL_RENDERBUFFER, num_samples, GL_DEPTH_COMPONENT, self.window_size[0], self.window_size[1])
+            GL_RENDERBUFFER,
+            num_samples,
+            GL_DEPTH_COMPONENT,
+            self.window_size[0],
+            self.window_size[1],
+        )
 
         self.msaa_fbo = glGenFramebuffers(1)
         glBindFramebuffer(GL_FRAMEBUFFER, self.msaa_fbo)
 
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, self.msaa_fbo, 0)
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, self.msaa_rbo_color)
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.msaa_rbo_depth)
+        glFramebufferTexture2D(
+            GL_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D_MULTISAMPLE,
+            self.msaa_fbo,
+            0,
+        )
+        glFramebufferRenderbuffer(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, self.msaa_rbo_color
+        )
+        glFramebufferRenderbuffer(
+            GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.msaa_rbo_depth
+        )
 
         status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
         print("frame_buffer_status:", status)
@@ -219,7 +259,10 @@ class Viewer:
 
         iMultiSample = glGetIntegerv(GL_SAMPLE_BUFFERS)
         iNumSamples = glGetIntegerv(GL_SAMPLES)
-        print("MSAA on, GL_SAMPLE_BUFFERS = %d, GL_SAMPLES = %d\n"%(iMultiSample, iNumSamples))
+        print(
+            "MSAA on, GL_SAMPLE_BUFFERS = %d, GL_SAMPLES = %d\n"
+            % (iMultiSample, iNumSamples)
+        )
 
     def _post_process_msaa(self):
         x, y, w, h = glGetIntegerv(GL_VIEWPORT)
@@ -229,9 +272,17 @@ class Viewer:
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
         glDrawBuffer(GL_BACK)
         glBlitFramebuffer(
-            x, y, w, h, x, y, w, h, 
-            GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, 
-            GL_NEAREST)
+            x,
+            y,
+            w,
+            h,
+            x,
+            y,
+            w,
+            h,
+            GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT,
+            GL_NEAREST,
+        )
 
     # The function called whenever a key is pressed.
     # Note the use of Python tuples to pass in: (key, x, y)
@@ -242,7 +293,7 @@ class Viewer:
         if args[0] == b"\x1b":
             print("Hit ESC key to quit.")
             glutDestroyWindow(self.window)
-            sys.exit()
+            self.should_exit = True
 
     def mouse_func(self, button, state, x, y):
         if state == 0:
@@ -276,13 +327,23 @@ class Viewer:
     def run(self):
         # Init glut
         glutInit(())
-        glutInitDisplayMode(
-            GLUT_RGBA
-            | GLUT_DOUBLE
-            | GLUT_ALPHA
-            | GLUT_DEPTH
-            # | GLUT_MULTISAMPLE
-        )
+        if self.use_msaa:
+            glutInitDisplayMode(
+                GLUT_RGBA
+                | GLUT_DOUBLE
+                | GLUT_ALPHA
+                | GLUT_DEPTH
+                # | GLUT_MULTISAMPLE
+            )
+        else:
+            glutInitDisplayMode(
+                GLUT_RGBA
+                | GLUT_DOUBLE
+                | GLUT_ALPHA
+                | GLUT_DEPTH
+                | GLUT_MULTISAMPLE  # SM) ON for better quality
+            )
+
         glutInitWindowSize(*self.window_size)
         glutInitWindowPosition(0, 0)
 
@@ -303,14 +364,20 @@ class Viewer:
         # Run
         glutMainLoop()
 
-    def save_screen(self, dir, name, format="png", render=False, save_alpha_channel=False):
+        if self.should_exit:
+            glutLeaveMainLoop()
+            sys.exit(0)  # Exit the program
+
+    def save_screen(
+        self, dir, name, format="png", render=False, save_alpha_channel=False
+    ):
         image = self.get_screen(render, save_alpha_channel)
         image.save(os.path.join(dir, "%s.%s" % (name, format)), format=format)
 
     def get_screen(self, render=False, save_alpha_channel=False):
         if render:
             self.draw_GL()
-        
+
         x, y, width, height = glGetIntegerv(GL_VIEWPORT)
         glPixelStorei(GL_PACK_ALIGNMENT, 1)
         if save_alpha_channel:
@@ -320,5 +387,5 @@ class Viewer:
             data = glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE)
             image = Image.frombytes("RGB", (width, height), data)
         image = image.transpose(Image.FLIP_TOP_BOTTOM)
-        
+
         return image

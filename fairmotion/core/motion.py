@@ -49,7 +49,9 @@ class Joint(object):
         self.index_child_joint = {}
         self.xform_global = constants.eye_T()
         self.xform_from_parent_joint = xform_from_parent_joint
-        self.parent_joint = self.set_parent_joint(parent_joint)
+        self.set_parent_joint(
+            parent_joint
+        )  # set joint.parent_joint, joint.xform_global # this does not call add_child_joint (no change on parent_joint side)
         self.info = {"dof": dof}  # set ball joint by default
 
         self.length = length
@@ -72,6 +74,9 @@ class Joint(object):
                     self.limits[1] = lm
                 else:
                     self.limits[2] = lm
+
+        # SM) for non-joint end-effectors
+        self.extra_links = dict()
 
     def get_child_joint(self, key):
         return self.child_joints[utils.get_index(self.index_child_joint, key)]
@@ -100,10 +105,13 @@ class Joint(object):
         assert isinstance(joint, Joint)
         self.parent_joint = joint
         self.xform_global = np.dot(
-            self.parent_joint.xform_global, self.xform_from_parent_joint,
+            self.parent_joint.xform_global,
+            self.xform_from_parent_joint,
         )
 
     def __eq__(self, other):
+        if self.name != other.name:
+            return False
         if (self.xform_from_parent_joint != other.xform_from_parent_joint).any():
             return False
         if (self.xform_global != other.xform_global).any():
@@ -114,6 +122,22 @@ class Joint(object):
         if len(self.child_joints) != len(other.child_joints):
             return False
         return True
+
+    # SM)
+    def add_extra_links(self, name, T):
+        assert name not in self.extra_links
+        # self.extra_links[name] = T
+        mid_p = 0.5 * T[:3, 3]
+        z_dir_R = math.R_from_vectors(np.array([0, 0, 1]), mid_p)
+        self.extra_links[name] = conversions.Rp2T(z_dir_R, mid_p)
+
+    # SM)
+    def set_xform_global_recursive(self, xform_global):
+        self.xform_global = xform_global
+        for child in self.child_joints:
+            child.set_xform_global_recursive(
+                np.dot(self.xform_global, child.xform_from_parent_joint)
+            )
 
 
 class Skeleton(object):
@@ -164,9 +188,95 @@ class Skeleton(object):
         else:
             parent_joint = self.get_joint(parent_joint)
             parent_joint.add_child_joint(joint)
+            # SM) calculate body_T
+            mid_p = 0.5 * joint.xform_from_parent_joint[:3, 3]
+            z_dir_R = math.R_from_vectors(np.array([0, 0, 1]), mid_p)
+            joint.body_T = conversions.Rp2T(z_dir_R, mid_p)
+
         self.index_joint[joint.name] = len(self.joints)
         self.joints.append(joint)
         self.num_dofs += joint.info["dof"]
+
+    def add_joint_inbetween(
+        self,
+        parent_joint_name,
+        joint_name,
+        childs_to_move,
+        xform_from_parent_joint=None,
+    ):
+        """parent_joint - joint - childjoints"""
+        """ CAUTION : should also add zero-rotations for motion.poses.data """
+
+        parent_joint = self.get_joint(parent_joint_name)
+        assert parent_joint, "parent can't be null for `add_joint_inbetween`"
+
+        # add_child_joint will do normally,
+        # but we want to keep the joint.child_joints order and self(skel).joints order, so we manually loop over and tuck inbetweem
+        if childs_to_move == "all":
+            childs_to_move = [child.name for child in parent_joint.child_joints]
+
+        if xform_from_parent_joint is None:
+            v = np.zeros(3)
+            for child in childs_to_move:
+                v += self.get_joint(child).xform_from_parent_joint[:3, 3]
+            v /= len(childs_to_move)
+            xform_from_parent_joint = constants.eye_T()
+            xform_from_parent_joint[:3, 3] = v / 2.0
+
+            for child in childs_to_move:
+                child_joint = self.get_joint(child)
+                child_joint.xform_from_parent_joint[:3, 3] = (
+                    child_joint.xform_from_parent_joint[:3, 3]
+                    - xform_from_parent_joint[:3, 3]
+                )
+
+        joint = Joint(
+            joint_name,
+            dof=3,
+            parent_joint=parent_joint,
+            xform_from_parent_joint=xform_from_parent_joint,
+        )
+
+        # calculate body_T
+        mid_p = 0.5 * joint.xform_from_parent_joint[:3, 3]
+        z_dir_R = math.R_from_vectors(np.array([0, 0, 1]), mid_p)
+        joint.body_T = conversions.Rp2T(z_dir_R, mid_p)
+
+        # add_child_joint will do normally,
+        # but we want to keep the joint.child_joints order and self(skel).joints order, so we manually loop over and tuck inbetweem
+        if childs_to_move == "all":
+            childs_to_move = [child.name for child in parent_joint.child_joints]
+
+        if len(childs_to_move) == 0:
+            self.add_joint(joint, parent_joint)
+        else:
+
+            min_id_child = 1e4
+            argmin_id_child_name = None
+            for child_name in childs_to_move:
+                if parent_joint.index_child_joint[child_name] < min_id_child:
+                    min_id_child = parent_joint.index_child_joint[child_name]
+                    argmin_id_child_name = child_name
+
+            parent_joint.child_joints = (
+                parent_joint.child_joints[:min_id_child]
+                + [joint]
+                + parent_joint.child_joints[min_id_child:]
+            )
+            for child_name in childs_to_move:
+                child = self.get_joint(child_name)
+                joint.add_child_joint(child)
+                parent_joint.child_joints.remove(child)
+
+            parent_joint.index_child_joint = {}
+            for i, child in enumerate(parent_joint.child_joints):
+                parent_joint.index_child_joint[child.name] = i
+
+            min_cidx = self.get_index_joint(argmin_id_child_name)
+            self.joints = self.joints[:min_cidx] + [joint] + self.joints[min_cidx:]
+            for i, ji in enumerate(self.joints):
+                self.index_joint[ji.name] = i
+            self.num_dofs += joint.info["dof"]
 
     def num_joints(self):
         return len(self.joints)
@@ -184,6 +294,96 @@ class Skeleton(object):
         if sorted(self.index_joint.keys()) != sorted(self.index_joint.keys()):
             return False
         return True
+
+    # SM)
+    def change_joint_offset(self, joint_id, new_offset):
+        joint = self.get_joint(joint_id)
+        assert joint.parent_joint is not None
+        joint.xform_from_parent_joint[:3, 3] = new_offset
+        xform_global = np.dot(
+            joint.parent_joint.xform_global, joint.xform_from_parent_joint
+        )
+        joint.set_xform_global_recursive(xform_global)
+
+        mid_p = 0.5 * joint.xform_from_parent_joint[:3, 3]
+        z_dir_R = math.R_from_vectors(np.array([0, 0, 1]), mid_p)
+        joint.body_T = conversions.Rp2T(z_dir_R, mid_p)
+
+    def get_offsets(self):
+        offsets = []
+        for joint in self.joints:
+            offsets.append(joint.xform_from_parent_joint[:3, 3])
+        return np.vstack(offsets)
+
+    def get_parent_idx_in_order(self):
+        parents = []
+        for joint in self.joints:
+            if joint.parent_joint is None:
+                parents.append(-1)
+            else:
+                parents.append(self.get_index_joint(joint.parent_joint))
+        return np.array(parents)
+
+    def get_names_in_order(self):
+        names = []
+        for joint in self.joints:
+            names.append(joint.name)
+        return names
+
+    def change_joint_name(self, joint_i, new_name):
+        assert type(joint_i) == int
+        self.index_joint[new_name] = joint_i
+        self.index_joint.pop(self.joints[joint_i].name)
+        self.joints[joint_i].name = new_name
+
+    # SM)
+    def _recursive_joint_idx_name(self, joint_name, recursive_names, recursive_ids):
+        joint = self.get_joint(joint_name)
+        for child in joint.child_joints:
+            self._recursive_joint_idx_name(child.name, recursive_names, recursive_ids)
+        recursive_names.append(joint_name)
+        recursive_ids.append(self.get_index_joint(joint_name))
+
+    # SM)
+    def remove_joint_and_childs(self, joint_name):
+        remove_names, remove_idxs = [], []
+        self._recursive_joint_idx_name(joint_name, remove_names, remove_idxs)
+
+        # remove (parent, child=joint_name) relationship
+        for joint in self.joints:
+            for ci, child in enumerate(joint.child_joints):
+                if child.name == joint_name:
+                    del joint.child_joints[ci]
+                    break
+
+        for rm_joint_name in remove_names:
+            del self.joints[self.get_index_joint(rm_joint_name)]
+            # update
+            for jidx, joint_i in enumerate(self.joints):
+                self.index_joint[joint_i.name] = jidx
+
+        return remove_idxs
+
+    # SM)
+    def remove_childs_except(self, joint_name, exceptions):
+        joint = self.get_joint(joint_name)
+        remove_names, remove_idxs = [], []
+        for child in joint.child_joints:
+            if child.name in exceptions:
+                continue
+            self._recursive_joint_idx_name(child.name, remove_names, remove_idxs)
+
+        for rm_joint_name in remove_names:
+            del self.joints[self.get_index_joint(rm_joint_name)]
+            # update
+            for jidx, joint_i in enumerate(self.joints):
+                self.index_joint[joint_i.name] = jidx
+
+        joint.child_joints = [
+            child for child in joint.child_joints if (child.name in exceptions)
+        ]
+
+        return remove_idxs
 
 
 class Pose(object):
@@ -203,7 +403,7 @@ class Pose(object):
 
     Use the `to_matrix()` to convert the pose object to numpy matrix form,
     and `from_matrix(data, skel)` to convert numpy matrix to pose object. This
-    is useful for serializing/deserializing data for batch processing, or to 
+    is useful for serializing/deserializing data for batch processing, or to
     create batched tensor data for ML model inputs.
 
     Use `get_transform(key, local)` to get joint transformation matrices, in
@@ -213,7 +413,9 @@ class Pose(object):
     def __init__(self, skel, data=None):
         assert isinstance(skel, Skeleton)
         if data is None:
-            data = [constants.eye_T for _ in range(skel.num_joints())]
+            data = [
+                constants.eye_T() for _ in range(skel.num_joints())
+            ]  # SM) typo fixed: eye_T (ftn) -> eye_T()
         assert skel.num_joints() == len(data), "{} vs. {}".format(
             skel.num_joints(), len(data)
         )
@@ -333,6 +535,27 @@ class Pose(object):
             data.append(conversions.Rp2T(R, p))
         return Pose(pose1.skel, data)
 
+    # SM)
+    def get_root_facing_transform_byRoot(self, use_height=False):
+        body_T = constants.eye_T()
+        rootR = self.get_transform(0, local=True)[:3, :3]
+        yAngle = math.project_rotation_1D(rootR, axis=self.skel.v_up_env)
+        body_T[:3, :3] = conversions.Ay2R(yAngle)
+        body_T[:3, 3] = self.get_transform(0, local=False)[:3, 3]
+        if not use_height:
+            body_T[1, 3] = 0
+        return body_T
+
+    # SM)
+    def positions(self, local=True):
+        return self.to_matrix(local)[..., :3, 3]
+
+    def remove_joints(self, joint_idxs):
+        self.data = [di for i, di in enumerate(self.data) if i not in joint_idxs]
+        # remove_jidx = np.zeros(len(self.data), dtype=bool)
+        # remove_jidx[joint_idxs] = True
+        # self.data = self.data[~remove_jidx]
+
 
 class Motion(object):
     """Defines a motion sequence.
@@ -356,7 +579,10 @@ class Motion(object):
     """
 
     def __init__(
-        self, name="motion", skel=None, fps=60,
+        self,
+        name="motion",
+        skel=None,
+        fps=30,  # SM) default fps 60->30
     ):
         self.name = name
         self.skel = skel
@@ -378,11 +604,12 @@ class Motion(object):
         for idx in range(len(self.poses)):
             self.poses[idx].set_skeleton(skel)
 
-    def add_one_frame(self, pose_data):
+    def add_one_frame(self, pose_data=None):
         """Adds a pose at the end of motion object.
 
         Args:
-            pose_data: List of pose data, where each pose 
+            pose_data: List of pose data, where each pose
+            None means zero-pose (Identity for all joints)
         """
         self.poses.append(Pose(self.skel, pose_data))
 
@@ -391,10 +618,10 @@ class Motion(object):
         return frame * self.fps_inv
 
     def time_to_frame(self, time):
-        '''
-        Adding small value is necessary to prevent error 
+        """
+        Adding small value is necessary to prevent error
         arised from floating point precision
-        '''
+        """
         return int(time * self.fps + 1e-05)
 
     def get_pose_by_frame(self, frame):
@@ -479,3 +706,44 @@ class Motion(object):
             pose = Pose.from_matrix(pose_data, skel, local)
             motion.poses.append(pose)
         return motion
+
+    # SM)
+    def get_joint_transforms(self, key, local=True):
+        """
+        Returns joint pose data in transformation matrix format, with shape
+        (seq_len, 4, 4)
+        """
+        data = []
+        for pose in self.poses:
+            data.append(pose.get_transform(key, local))
+        return np.array(data)
+
+    def remove_childs_except(self, joint_name, exceptions):
+        remove_idxs = self.skel.remove_childs_except(joint_name, exceptions)
+        for pose in self.poses:
+            pose.remove_joints(remove_idxs)
+
+    def remove_joint_and_childs(self, joint_name):
+        remove_idxs = self.skel.remove_joint_and_childs(joint_name)
+        for pose in self.poses:
+            pose.remove_joints(remove_idxs)
+
+    def add_joint_inbetween(
+        self,
+        parent_joint_name,
+        name=None,
+        childs_to_move="all",
+        xform_from_parent_joint=None,
+    ):
+        joint_name = name if name else parent_joint_name + "_dummy"
+
+        self.skel.add_joint_inbetween(
+            parent_joint_name, joint_name, childs_to_move, xform_from_parent_joint
+        )
+        new_joint_id = self.skel.get_index_joint(joint_name)
+        for pose in self.poses:
+            pose.data = (
+                pose.data[:new_joint_id]
+                + [constants.eye_T()]
+                + pose.data[new_joint_id:]
+            )

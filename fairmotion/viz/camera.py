@@ -50,10 +50,7 @@ class Camera(object):
         pos_new = self.origin + np.dot(R, pos_local)
         dp = pos_new - self.origin
         dp /= np.linalg.norm(dp)
-        if (
-            np.linalg.norm(dp - self.vup) > 0.2
-            and np.linalg.norm(dp + self.vup) > 0.2
-        ):
+        if np.linalg.norm(dp - self.vup) > 0.2 and np.linalg.norm(dp + self.vup) > 0.2:
             self.pos = pos_new
 
     def zoom(self, gamma, l_min=0.5):
@@ -71,7 +68,10 @@ class Camera(object):
         if np.array_equal(pos, self.origin):
             return
         d = pos - self.origin
-        if ignore_x: d[0] = 0.0
-        if ignore_y: d[1] = 0.0
-        if ignore_z: d[2] = 0.0
+        if ignore_x:
+            d[0] = 0.0
+        if ignore_y:
+            d[1] = 0.0
+        if ignore_z:
+            d[2] = 0.0
         self.translate(d)

@@ -9,6 +9,10 @@ from PIL import Image
 
 from fairmotion.utils import constants
 from fairmotion.ops import conversions, math as math_ops
+import cv2
+from PIL import Image
+from io import BytesIO
+from matplotlib import pyplot as plt
 
 
 def load_texture(file):
@@ -147,9 +151,7 @@ def render_sphere_info(
     )
 
 
-def render_cylinder(
-    T, length, radius, scale=1.0, color=[0, 0, 0, 1], slice=16
-):
+def render_cylinder(T, length, radius, scale=1.0, color=[0, 0, 0, 1], slice=16):
     quadric = gluNewQuadric()
     gluQuadricDrawStyle(quadric, GLU_FILL)
     gluQuadricNormals(quadric, GLU_SMOOTH)
@@ -364,9 +366,7 @@ def render_tet(p1, p2, p3, p4, color=[1.0, 1.0, 1.0, 1.0]):
     render_tri(p3, p1, p4, color)
 
 
-def render_tet_line(
-    p1, p2, p3, p4, color=[0.0, 0.0, 0.0, 1.0], line_width=1.0
-):
+def render_tet_line(p1, p2, p3, p4, color=[0.0, 0.0, 0.0, 1.0], line_width=1.0):
     render_line(p1, p2, color, line_width)
     render_line(p2, p3, color, line_width)
     render_line(p3, p1, color, line_width)
@@ -395,15 +395,15 @@ def render_ground_texture(
     nx = int(lx / dx) + 1
     nz = int(lz / dz) + 1
 
-    if axis is "x":
+    if axis == "x":
         raise NotImplementedError
-    elif axis is "y":
+    elif axis == "y":
         up_vec = np.array([0.0, 1.0, 0.0])
         p1 = np.array([-0.5 * size[0], 0, -0.5 * size[0]])
         p2 = np.array([0.5 * size[0], 0, -0.5 * size[0]])
         p3 = np.array([0.5 * size[0], 0, 0.5 * size[0]])
         p4 = np.array([-0.5 * size[0], 0, 0.5 * size[0]])
-    elif axis is "z":
+    elif axis == "z":
         up_vec = np.array([0.0, 0.0, 1.0])
         p1 = np.array([-0.5 * size[0], -0.5 * size[0], 0])
         p2 = np.array([0.5 * size[0], -0.5 * size[0], 0])
@@ -432,7 +432,7 @@ def render_ground_texture(
         glDisable(GL_LIGHTING)
         glPushMatrix()
         glTranslatef(offset[0], offset[1], offset[2])
-        if axis is "y":
+        if axis == "y":
             glRotated(-90.0, 1, 0, 0)
         render_disk(
             constants.eye_T(),
@@ -446,9 +446,7 @@ def render_ground_texture(
         glPopMatrix()
 
 
-def render_path(
-    data, color=[0.0, 0.0, 0.0], scale=1.0, line_width=1.0, point_size=1.0
-):
+def render_path(data, color=[0.0, 0.0, 0.0], scale=1.0, line_width=1.0, point_size=1.0):
     glColor(color)
     glLineWidth(line_width)
     glBegin(GL_LINE_STRIP)
@@ -480,9 +478,7 @@ def render_arrow(p1, p2, D=0.1, color=[1.0, 0.5, 0.0], closed=False):
 
     if x != 0.0 or y != 0.0:
         glRotated(math.atan2(y, x) / RADPERDEG, 0.0, 0.0, 1.0)
-        glRotated(
-            math.atan2(math.sqrt(x * x + y * y), z) / RADPERDEG, 0.0, 1.0, 0.0
-        )
+        glRotated(math.atan2(math.sqrt(x * x + y * y), z) / RADPERDEG, 0.0, 1.0, 0.0)
     elif z < 0:
         glRotated(180, 1.0, 0.0, 0.0)
 
@@ -528,17 +524,11 @@ def render_transform(
         o = np.zeros(3)
         if use_arrow:
             if render_ori[0]:
-                render_arrow(
-                    o, o + R[:, 0], D=line_width * 0.02, color=color_ori[0]
-                )
+                render_arrow(o, o + R[:, 0], D=line_width * 0.02, color=color_ori[0])
             if render_ori[1]:
-                render_arrow(
-                    o, o + R[:, 1], D=line_width * 0.02, color=color_ori[1]
-                )
+                render_arrow(o, o + R[:, 1], D=line_width * 0.02, color=color_ori[1])
             if render_ori[2]:
-                render_arrow(
-                    o, o + R[:, 2], D=line_width * 0.02, color=color_ori[2]
-                )
+                render_arrow(o, o + R[:, 2], D=line_width * 0.02, color=color_ori[2])
         else:
             if render_ori[0]:
                 render_line(o, o + R[:, 0], color=color_ori[0])
@@ -559,6 +549,7 @@ def render_ground(
     origin=True,
     use_arrow=False,
     lighting=False,
+    fillIn=False,  # SM)
 ):
     lx = size[0]
     lz = size[1]
@@ -572,39 +563,57 @@ def render_ground(
     if lighting:
         glEnable(GL_LIGHTING)
 
-    if axis is "x":
-        for i in np.linspace(-0.5 * lx, 0.5 * lx, nx):
-            glBegin(GL_LINES)
-            glVertex3d(0, i, -0.5 * lz)
-            glVertex3d(0, i, 0.5 * lz)
-            glEnd()
-        for i in np.linspace(-0.5 * lz, 0.5 * lz, nz):
-            glBegin(GL_LINES)
-            glVertex3d(0, -0.5 * lx, i)
-            glVertex3d(0, 0.5 * lx, i)
-            glEnd()
-    elif axis is "y":
-        for i in np.linspace(-0.5 * lx, 0.5 * lx, nx):
-            glBegin(GL_LINES)
-            glVertex3d(i, 0, -0.5 * lz)
-            glVertex3d(i, 0, 0.5 * lz)
-            glEnd()
-        for i in np.linspace(-0.5 * lz, 0.5 * lz, nz):
-            glBegin(GL_LINES)
-            glVertex3d(-0.5 * lx, 0, i)
-            glVertex3d(0.5 * lx, 0, i)
-            glEnd()
-    elif axis is "z":
-        for i in np.linspace(-0.5 * lx, 0.5 * lx, nx):
-            glBegin(GL_LINES)
-            glVertex3d(i, -0.5 * lz, 0)
-            glVertex3d(i, 0.5 * lz, 0)
-            glEnd()
-        for i in np.linspace(-0.5 * lz, 0.5 * lz, nz):
-            glBegin(GL_LINES)
-            glVertex3d(-0.5 * lx, i, 0)
-            glVertex3d(0.5 * lx, i, 0)
-            glEnd()
+    if fillIn:  # SM)
+        glBegin(GL_QUADS)
+        cnt = 0
+        if axis == "y":
+            for i in np.linspace(-0.5 * lx, 0.5 * lx, nx):
+                for j in np.linspace(-0.5 * lz, 0.5 * lz, nz):
+                    if cnt % 2 == 0:
+                        glColor3d(0.8, 0.8, 0.8)
+                    else:
+                        glColor3d(0.92, 0.92, 0.92)
+                    glNormal3d(0, 1, 0)
+                    glVertex3d(i, 0, j)
+                    glVertex3d(i, 0, j + dz)
+                    glVertex3d(i + dx, 0, j + dz)
+                    glVertex3d(i + dx, 0, j)
+                    cnt += 1
+        glEnd()
+    else:
+        if axis == "x":
+            for i in np.linspace(-0.5 * lx, 0.5 * lx, nx):
+                glBegin(GL_LINES)
+                glVertex3d(0, i, -0.5 * lz)
+                glVertex3d(0, i, 0.5 * lz)
+                glEnd()
+            for i in np.linspace(-0.5 * lz, 0.5 * lz, nz):
+                glBegin(GL_LINES)
+                glVertex3d(0, -0.5 * lx, i)
+                glVertex3d(0, 0.5 * lx, i)
+                glEnd()
+        elif axis == "y":
+            for i in np.linspace(-0.5 * lx, 0.5 * lx, nx):
+                glBegin(GL_LINES)
+                glVertex3d(i, 0, -0.5 * lz)
+                glVertex3d(i, 0, 0.5 * lz)
+                glEnd()
+            for i in np.linspace(-0.5 * lz, 0.5 * lz, nz):
+                glBegin(GL_LINES)
+                glVertex3d(-0.5 * lx, 0, i)
+                glVertex3d(0.5 * lx, 0, i)
+                glEnd()
+        elif axis == "z":
+            for i in np.linspace(-0.5 * lx, 0.5 * lx, nx):
+                glBegin(GL_LINES)
+                glVertex3d(i, -0.5 * lz, 0)
+                glVertex3d(i, 0.5 * lz, 0)
+                glEnd()
+            for i in np.linspace(-0.5 * lz, 0.5 * lz, nz):
+                glBegin(GL_LINES)
+                glVertex3d(-0.5 * lx, i, 0)
+                glVertex3d(0.5 * lx, i, 0)
+                glEnd()
 
     if origin:
         render_transform(constants.eye_T(), use_arrow=use_arrow)
@@ -637,9 +646,7 @@ def render_quad_2D(p1, p2, p3, p4, color=[0, 0, 0, 1]):
     glEnd()
 
 
-def render_text(
-    text, pos, font=GLUT_BITMAP_TIMES_ROMAN_10, color=[0, 0, 0, 1]
-):
+def render_text(text, pos, font=GLUT_BITMAP_TIMES_ROMAN_10, color=[0, 0, 0, 1]):
     glPushAttrib(GL_DEPTH_TEST | GL_LIGHTING)
 
     glDisable(GL_DEPTH_TEST)
@@ -762,9 +769,7 @@ def render_graph_data_line_2D(
             y0 = origin[1] - axis_len * (y_prev - y_r[i][0]) / y_range_len
             x1 = origin[0] + axis_len * (x_cur - x_r[i][0]) / x_range_len
             y1 = origin[1] - axis_len * (y_cur - y_r[i][0]) / y_range_len
-            render_line_2D(
-                p1=(x0, y0), p2=(x1, y1), line_width=l_w[i], color=c[i]
-            )
+            render_line_2D(p1=(x0, y0), p2=(x1, y1), line_width=l_w[i], color=c[i])
             x_prev, y_prev = x_cur, y_cur
 
 
@@ -828,7 +833,7 @@ def render_progress_circle_2D(
     render_circle(T=T, r=radius, line_width=line_width, color=color_base)
     theta = 2 * math.pi * progress
     p += radius * np.array([math.cos(theta), math.sin(theta), 0])
-    render_point_2D((p[0], p[1]), size=scale_input*radius, color=color_input)
+    render_point_2D((p[0], p[1]), size=scale_input * radius, color=color_input)
 
 
 def render_direction_input_2D(
@@ -846,10 +851,8 @@ def render_direction_input_2D(
     p = np.array([origin[0], origin[1], 0])
     T = conversions.p2T(p)
     render_circle(T=T, r=radius, line_width=line_width, color=color_base)
-    render_line_2D(
-        p1=origin, p2=origin + v, line_width=line_width, color=color_input
-    )
-    render_point_2D(origin, size=scale_input*radius, color=[0.5, 0.5, 0.5, 1])
+    render_line_2D(p1=origin, p2=origin + v, line_width=line_width, color=color_input)
+    render_point_2D(origin, size=scale_input * radius, color=[0.5, 0.5, 0.5, 1])
 
 
 def render_matrix(
@@ -895,3 +898,110 @@ def render_matrix(
     render_line_2D((0, height), (width, height), line_width=line_width)
 
     glPopMatrix()
+
+
+# SM)
+from fairmotion.ops.math import R_from_vectors
+
+
+def render_link_cylinder(pose, joint, link_scale, color):
+    # returns X that X dot vec1 = vec2
+    pos_parent = conversions.T2p(pose.get_transform(joint.parent_joint, local=False))
+    T = pose.get_transform(joint, local=False)
+    pos = conversions.T2p(T)
+
+    p = 0.5 * (pos_parent + pos)
+    R = R_from_vectors(np.array([0, 0, 1]), pos_parent - pos)
+    render_capsule(
+        T=conversions.Rp2T(R, p),
+        length=np.linalg.norm(pos_parent - pos),
+        radius=link_scale,
+        color=color,
+        slice=8,
+    )
+
+
+# SM)
+def render_link_cube(pose, joint, link_scale, color):
+    cube_T = pose.get_transform(joint.parent_joint, local=False) @ joint.body_T
+    pos_parent = conversions.T2p(pose.get_transform(joint.parent_joint, local=False))
+    T = pose.get_transform(joint, local=False)
+    pos = conversions.T2p(T)
+    l = np.linalg.norm(pos_parent - pos)
+    r = link_scale
+    render_cube(T=cube_T, size=(r, r, l), color=color, solid=True)
+
+
+# SM)
+def draw_fc(pose, foot_joint_i, color):
+    foot_T = constants.eye_T()
+    foot_T[:3, 3] = pose.get_transform(foot_joint_i, local=False)[:3, 3]
+    foot_T[1, 3] = 1
+    render_circle(foot_T, r=10, color=color, draw_plane="zx")
+
+
+# SM)
+def render_img_on_window_from_path(filepath):
+    img = cv2.imread(filepath)
+    render_img_on_window(img.data, img.shape[1], img.shape[0], mode="BGR")
+
+
+def render_img_on_window_from_PIL_Image(img):
+    render_img_on_window(img.tobytes(), img.size[0], img.size[1], "RGBA")
+
+
+def render_img_on_window_from_pyplot():
+    buf = BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    data = buf.read()
+    buf.close()
+    img_buf = BytesIO(data)
+    img = Image.open(img_buf)
+    plt.clf()
+    render_img_on_window_from_PIL_Image(img)
+
+
+def render_img_on_window(img_data, texWidth, texHeight, mode="BGR"):
+    """img: # np.ndarray [h, w, 3]"""
+    glEnable(GL_TEXTURE_2D)
+    if mode == "BGR":
+        rgb_order = GL_BGR
+    elif mode == "RGBA":
+        rgb_order = GL_RGBA
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGB,
+        texWidth,
+        texHeight,
+        0,
+        rgb_order,
+        GL_UNSIGNED_BYTE,
+        img_data,
+    )
+
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL)
+
+    glBegin(GL_QUADS)
+    glTexCoord2f(0.0, 0.0)
+    glVertex2f(0.0, 0.0)
+    glTexCoord2f(1.0, 0.0)
+    glVertex2f(texWidth, 0.0)
+    glTexCoord2f(1.0, 1.0)
+    glVertex2f(texWidth, texHeight)
+    glTexCoord2f(0.0, 1.0)
+    glVertex2f(0.0, texHeight)
+    glEnd()
+
+    glDisable(GL_TEXTURE_2D)
+
+
+# TODO
+# https://stackoverflow.com/questions/8598673/how-to-save-a-pylab-figure-into-in-memory-file-which-can-be-read-into-pil-image
+# https://stackoverflow.com/questions/54160208/how-to-use-opencv-in-python3-to-read-file-from-file-buffer
+# https://stackoverflow.com/questions/17967320/python-opencv-convert-image-to-byte-string/64849668#64849668

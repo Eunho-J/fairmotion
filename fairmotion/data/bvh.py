@@ -1,11 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import numpy as np
-
+import os
 from fairmotion.core import motion as motion_classes
 from fairmotion.core.velocity import MotionWithVelocity
 from fairmotion.utils import constants, utils
 from fairmotion.ops import conversions
+from fairmotion.utils.contact_utils import get_foot_indices, get_foot_contact_ratio
 
 
 def load(
@@ -18,6 +19,8 @@ def load(
     v_up_skel=np.array([0.0, 1.0, 0.0]),
     v_face_skel=np.array([0.0, 0.0, 1.0]),
     v_up_env=np.array([0.0, 1.0, 0.0]),
+    ignore_root_skel=True, # SM)
+    ee_as_joint=True, # SM)
 ):
     if not motion:
         motion = motion_classes.Motion()
@@ -26,6 +29,7 @@ def load(
         words = [word.decode() for line in f for word in line.split()]
         f.close()
     assert words is not None and len(words) > 0
+    motion.name = os.path.normpath(file)
     cnt = 0
     total_depth = 0
     joint_stack = [None, None]
@@ -39,6 +43,7 @@ def load(
         )
 
     if load_skel:
+        end_extra_link = False
         while cnt < len(words):
             # joint_prev = joint_stack[-2]
             joint_cur = joint_stack[-1]
@@ -58,6 +63,18 @@ def load(
                 )
                 T1 = conversions.p2T(scale * np.array([x, y, z]))
                 joint_cur.xform_from_parent_joint = T1
+
+                # SM)
+                if len(joint_list) == 1 and ignore_root_skel:
+                    x, y, z= (0.0, 0.0, 0.0)
+                T1 = conversions.p2T(scale * np.array([x, y, z]))
+                joint_cur.xform_from_parent_joint = T1
+
+                if end_extra_link and (not ee_as_joint): 
+                    parent_extra.add_extra_links(parent_extra.name+"_End", T1)
+                    end_extra_link = False
+
+
                 cnt += 4
             elif word == "channels":
                 ndofs = int(words[cnt + 1])
@@ -77,8 +94,22 @@ def load(
                     )
                 cnt += ndofs + 2
             elif word == "end":
-                joint_dummy = motion_classes.Joint(name="END")
-                joint_stack.append(joint_dummy)
+                # SM)
+                if ee_as_joint:
+                    parent_joint_list.append(joint_cur)
+                    joint = motion_classes.Joint(name=joint_cur.name+'_End')
+                    joint.info["dof"] = 0
+                    joint.info["bvh_channels"] = []
+                    joint_stack.append(joint)
+                    joint_list.append(joint)
+
+                else:
+                    parent_extra = joint_cur 
+                    joint_dummy = motion_classes.Joint(name=joint_cur.name+"_End")
+                    end_extra_link = True
+                    joint_stack.append(joint_dummy)
+                # joint_dummy = motion_classes.Joint(name="END")
+                # joint_stack.append(joint_dummy)
                 cnt += 2
             elif word == "{":
                 total_depth += 1
@@ -204,6 +235,11 @@ def load(
             motion = MotionWithVelocity.from_motion(motion)
         assert motion.num_frames() > 0
 
+    ### ad-hoc remove prefix from 'prefix:joint_name' (e.g. mixamorig:Spine)
+    for ji, joint in enumerate(motion.skel.joints): 
+        if ':' in joint.name:
+            motion.skel.change_joint_name(ji, joint.name.split(':')[-1])
+
     return motion
 
 
@@ -213,6 +249,8 @@ def _write_hierarchy(motion, file, joint, scale=1.0, rot_order="XYZ", tab=""):
             return "Xrotation Yrotation Zrotation"
         elif order == "zyx" or order == "ZYX":
             return "Zrotation Yrotation Xrotation"
+        elif order == "zxy" or order == "ZXY": # SM)
+            return "Zrotation Xrotation Yrotation"
         else:
             raise NotImplementedError
 
@@ -248,7 +286,7 @@ def _write_hierarchy(motion, file, joint, scale=1.0, rot_order="XYZ", tab=""):
     return joint_order
 
 
-def save(motion, filename, scale=1.0, rot_order="XYZ", verbose=False):
+def save(motion, filename, scale=1.0, rot_order="XYZ", verbose=False, ee_as_joint=True, root_motion_local=False):
     if verbose:
         print(" >  >  Save BVH file: %s" % filename)
     with open(filename, "w") as f:
@@ -256,9 +294,14 @@ def save(motion, filename, scale=1.0, rot_order="XYZ", verbose=False):
         if verbose:
             print(" >  >  >  >  Write BVH hierarchy")
         f.write("HIERARCHY\n")
-        joint_order = _write_hierarchy(
-            motion, f, motion.skel.root_joint, scale, rot_order
-        )
+        if ee_as_joint: # SM)
+            joint_order = _write_hierarchy_ee_as_joint(
+                motion, f, motion.skel.root_joint, scale, rot_order
+            )
+        else:
+            joint_order = _write_hierarchy(
+                motion, f, motion.skel.root_joint, scale, rot_order
+            )
         """ Write data """
         if verbose:
             print(" >  >  >  >  Write BVH data")
@@ -281,14 +324,19 @@ def save(motion, filename, scale=1.0, rot_order="XYZ", verbose=False):
 
             for joint_name in joint_order:
                 joint = motion.skel.get_joint(joint_name)
-                R, p = conversions.T2Rp(pose.get_transform(joint, local=True))
-                p *= scale
-                R1, R2, R3 = conversions.R2E(R, order=rot_order, degrees=True)
                 if joint == motion.skel.root_joint:
+                    R, p = conversions.T2Rp(pose.get_transform(joint, local=root_motion_local))
+                    p *= scale
+                    R1, R2, R3 = conversions.R2E(R, order=rot_order, degrees=True)
                     f.write(
                         "%f %f %f %f %f %f " % (p[0], p[1], p[2], R1, R2, R3)
                     )
+                elif joint.info["dof"] == 0:
+                    continue
                 else:
+                    R, p = conversions.T2Rp(pose.get_transform(joint, local=True))
+                    p *= scale
+                    R1, R2, R3 = conversions.R2E(R, order=rot_order, degrees=True)
                     f.write("%f %f %f " % (R1, R2, R3))
             f.write("\n")
             t += dt
@@ -302,3 +350,54 @@ def save(motion, filename, scale=1.0, rot_order="XYZ", verbose=False):
 
 def load_parallel(files, cpus=20, **kwargs):
     return utils.run_parallel(load, files, num_cpus=cpus, **kwargs)
+
+
+# SM)
+def _write_hierarchy_ee_as_joint(motion, file, joint, scale=1.0, rot_order="XYZ", tab=""):
+    def rot_order_to_str(order):
+        if order == "xyz" or order == "XYZ":
+            return "Xrotation Yrotation Zrotation"
+        elif order == "zyx" or order == "ZYX":
+            return "Zrotation Yrotation Xrotation"
+        elif order == "zxy" or order == "ZXY": #SM
+            return "Zrotation Xrotation Yrotation"
+        else:
+            raise NotImplementedError
+    
+    # print(joint.name, joint.info['dof'])
+    if joint.info["dof"] == 0:
+        file.write(tab + "End Site\n")
+        file.write(tab + "{\n")
+        R, p = conversions.T2Rp(joint.xform_from_parent_joint)
+        p *= scale
+        file.write(tab + "\tOFFSET %f %f %f\n" % (p[0], p[1], p[2]))
+        file.write(tab + "}\n")
+        return []
+
+    joint_order = [joint.name]
+    is_root_joint = joint.parent_joint is None
+    if is_root_joint:
+        file.write(tab + "ROOT %s\n" % joint.name)
+    else:
+        file.write(tab + "JOINT %s\n" % joint.name)
+
+    file.write(tab + "{\n")
+    R, p = conversions.T2Rp(joint.xform_from_parent_joint)
+    p *= scale
+    file.write(tab + "\tOFFSET %f %f %f\n" % (p[0], p[1], p[2]))
+    if is_root_joint:
+        file.write(
+            tab
+            + "\tCHANNELS 6 Xposition Yposition Zposition %s\n"
+            % rot_order_to_str(rot_order)
+        )
+    else:
+        file.write(tab + "\tCHANNELS 3 %s\n" % rot_order_to_str(rot_order))
+    for child_joint in joint.child_joints:
+        child_joint_order = _write_hierarchy_ee_as_joint(
+            motion, file, child_joint, scale, rot_order, tab + "\t"
+        )
+        joint_order.extend(child_joint_order)
+    file.write(tab + "}\n")
+    return joint_order
+

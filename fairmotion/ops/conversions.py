@@ -76,7 +76,10 @@ def A2A(A):
             return a
 
     return batch_auto_reshape(
-        A, lambda x: utils._apply_fn_agnostic_to_vec_mat(x, a2a), (3,), (3,),
+        A,
+        lambda x: utils._apply_fn_agnostic_to_vec_mat(x, a2a),
+        (3,),
+        (3,),
     )
 
 
@@ -91,19 +94,28 @@ def A2E(A, order="xyz", degrees=False):
 
 def A2Q(A):
     return batch_auto_reshape(
-        A, lambda x: Rotation.from_rotvec(x).as_quat(), (3,), (4,),
+        A,
+        lambda x: Rotation.from_rotvec(x).as_quat(),
+        (3,),
+        (4,),
     )
 
 
 def A2R(A):
     return batch_auto_reshape(
-        A, lambda x: Rotation.from_rotvec(x).as_matrix(), (3,), (3, 3),
+        A,
+        lambda x: Rotation.from_rotvec(x).as_matrix(),
+        (3,),
+        (3, 3),
     )
 
 
 def A2T(A):
     return batch_auto_reshape(
-        A, lambda x: Rp2T(A2R(x), constants.zero_p()), (3,), (4, 4),
+        A,
+        lambda x: Rp2T(A2R(x), constants.zero_p()),
+        (3,),
+        (4, 4),
     )
 
 
@@ -162,7 +174,10 @@ From R to other representations
 
 def R2A(R):
     return batch_auto_reshape(
-        R, lambda x: Rotation.from_matrix(x).as_rotvec(), (3, 3), (3,),
+        R,
+        lambda x: Rotation.from_matrix(x).as_rotvec(),
+        (3, 3),
+        (3,),
     )
 
 
@@ -177,7 +192,10 @@ def R2E(R, order="XYZ", degrees=False):
 
 def R2Q(R):
     return batch_auto_reshape(
-        R, lambda x: Rotation.from_matrix(x).as_quat(), (3, 3), (4,),
+        R,
+        lambda x: Rotation.from_matrix(x).as_quat(),
+        (3, 3),
+        (4,),
     )
 
 
@@ -197,7 +215,10 @@ def R2R(R):
     rotations are invalid. Otherwise returns the same values.
     """
     return batch_auto_reshape(
-        R, lambda x: Rotation.from_matrix(x).as_matrix(), (3, 3), (3, 3),
+        R,
+        lambda x: Rotation.from_matrix(x).as_matrix(),
+        (3, 3),
+        (3, 3),
     )
 
 
@@ -212,7 +233,10 @@ From Q to other representations
 
 def Q2A(Q):
     return batch_auto_reshape(
-        Q, lambda x: Rotation.from_quat(x).as_rotvec(), (4,), (3,),
+        Q,
+        lambda x: Rotation.from_quat(x).as_rotvec(),
+        (4,),
+        (3,),
     )
 
 
@@ -231,19 +255,28 @@ def Q2Q(Q, op, xyzw_in=True):
     Otherwise returns the same values.
     """
     return batch_auto_reshape(
-        Q, lambda x: Rotation.from_quat(x).as_quat(), (4,), (4,),
+        Q,
+        lambda x: Rotation.from_quat(x).as_quat(),
+        (4,),
+        (4,),
     )
 
 
 def Q2R(Q):
     return batch_auto_reshape(
-        Q, lambda x: Rotation.from_quat(x).as_matrix(), (4,), (3, 3),
+        Q,
+        lambda x: Rotation.from_quat(x).as_matrix(),
+        (4,),
+        (3, 3),
     )
 
 
 def Q2T(Q):
     return batch_auto_reshape(
-        Q, lambda x: Rp2T(Q2R(x), constants.zero_p()), (4,), (4, 4),
+        Q,
+        lambda x: Rp2T(Q2R(x), constants.zero_p()),
+        (4,),
+        (4, 4),
     )
 
 
@@ -309,3 +342,60 @@ def Rp2T(R, p):
 
 def p2T(p):
     return Rp2T(constants.eye_R(), np.array(p))
+
+
+# SM)
+def R2Rsix(R):
+    def _r2rsix(_r):
+        return _r[..., [0, 1, 2, 0, 1, 2], [0, 0, 0, 1, 1, 1]]
+
+    return batch_auto_reshape(
+        R,
+        lambda x: _r2rsix(x),
+        (
+            3,
+            3,
+        ),
+        (6,),
+    )
+
+
+# SM)
+def proj(u, v):
+    # u, v: [B, D]
+    # projet v to u
+    B, D = u.shape[0], u.shape[1]
+    uv = np.sum(u * v, axis=-1)
+    uu = np.sum(u * u, axis=-1)
+    a = (uv / uu).reshape(B, 1)
+    a = np.repeat(a, D, axis=1)
+    return a * u
+
+
+# SM)
+from sklearn.preprocessing import normalize
+
+
+def Rsix2R(Rsix):
+    def GramSchmidt(_rsix):
+        # 0 3 ?
+        # 1 4 ?
+        # 2 5 ?
+        v1 = _rsix[..., :3].copy()
+        v2 = _rsix[..., 3:].copy()
+        u1 = v1
+        e1 = normalize(u1, axis=1, norm="l2")
+        u2 = v2 - proj(u1, v2)
+        e2 = normalize(u2, axis=1, norm="l2")
+        e3 = np.cross(e1, e2)
+        return np.stack([e1, e2, e3], axis=-1)
+
+    return batch_auto_reshape(
+        Rsix,
+        lambda x: GramSchmidt(x),
+        (6,),
+        (
+            3,
+            3,
+        ),
+    )

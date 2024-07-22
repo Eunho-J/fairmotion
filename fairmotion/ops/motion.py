@@ -8,7 +8,7 @@ from fairmotion.core import velocity as vel_class
 from fairmotion.ops import conversions, math, quaternion
 
 
-def blend(pose1, pose2, alpha=0.5):
+def blend(pose1, pose2, alpha=0.5, skel_preserve=False):
     """
     Blends two poses, return (1-alpha)*pose1 + alpha*pose2
 
@@ -18,6 +18,9 @@ def blend(pose1, pose2, alpha=0.5):
     """
     assert 0.0 <= alpha <= 1.0
     pose_new = copy.deepcopy(pose1)
+    if skel_preserve:
+        pose_new.skel = pose1.skel
+
     for j in range(pose1.skel.num_joints()):
         R0, p0 = conversions.T2Rp(pose1.get_transform(j, local=True))
         R1, p1 = conversions.T2Rp(pose2.get_transform(j, local=True))
@@ -25,14 +28,15 @@ def blend(pose1, pose2, alpha=0.5):
         pose_new.set_transform(j, conversions.Rp2T(R, p), local=True)
     return pose_new
 
+
 def stitch(
-    motion1, 
-    motion2, 
+    motion1,
+    motion2,
     pivot_offset1=0,
     pivot_offset2=0,
-    blend_length=0, 
-    blend_method="overlapping"
-    ):
+    blend_length=0,
+    blend_method="overlapping",
+):
     """
     Combines two motion sequences into one, motion2 is appended to motion1.
     Blending is done if requested. The operation is not done in place.
@@ -40,7 +44,7 @@ def stitch(
     This method is a subset of the append method
 
     Args:
-        motion1: Previous motion 
+        motion1: Previous motion
         motion2: New motions to be added
         pivot_offset1: Pivot frame offset (sec) to access the pivot pose for motion1.
             The pose at [motion1.length()-pivot_offset1] will be the pivot pose
@@ -50,29 +54,25 @@ def stitch(
         blend_method: blending methods 'propagation', 'overlapping', and 'inertialization'.
     """
     return append(
-        motion1, 
-        motion2, 
-        pivot_offset1, 
-        pivot_offset2, 
-        True, 
-        blend_length, 
-        blend_method)
+        motion1, motion2, pivot_offset1, pivot_offset2, True, blend_length, blend_method
+    )
+
 
 def append(
-    motion1, 
-    motion2, 
+    motion1,
+    motion2,
     pivot_offset1=0,
     pivot_offset2=0,
     pivot_alignment=False,
-    blend_length=0, 
-    blend_method="overlapping"
-    ):
+    blend_length=0,
+    blend_method="overlapping",
+):
     """
     Combines two motion sequences into one, motion2 is appended to motion1.
     Blending is done if requested. The operation is not done in place.
 
     Args:
-        motion1: Previous motion 
+        motion1: Previous motion
         motion2: New motions to be added
         pivot_offset1: Pivot frame offset (sec) to access the pivot pose for motion1.
             The pose at [motion1.length()-pivot_offset1] will be the pivot pose
@@ -124,14 +124,13 @@ def append(
     _, theta = quaternion.Q_closest(Q1, Q2, v_up_env)
     dR = conversions.A2R(v_up_env * theta)
 
-    motion2 = transform(
-        motion2, conversions.Rp2T(dR, dp), pivot=0, local=False)
+    motion2 = transform(motion2, conversions.Rp2T(dR, dp), pivot=0, local=False)
 
     combined_motion = copy.deepcopy(motion1)
     combined_motion.name = f"{motion1.name}+{motion2.name}"
     del combined_motion.poses[frame_source + 1 :]
 
-    t_start = motion1.length()-blend_length
+    t_start = motion1.length() - blend_length
     t_processed = 0.0
     dt = 1 / motion2.fps
     for i in range(frame_target, motion2.num_frames()):
@@ -146,12 +145,14 @@ def append(
                 pose_out = blend(
                     motion1.get_pose_by_time(t_start),
                     motion2.get_pose_by_frame(i),
-                    alpha)
+                    alpha,
+                )
             elif blend_method == "overlapping":
                 pose_out = blend(
-                    motion1.get_pose_by_time(t_start+t_processed),
+                    motion1.get_pose_by_time(t_start + t_processed),
                     motion2.get_pose_by_frame(i),
-                    alpha)
+                    alpha,
+                )
             elif blend_method == "inertialization":
                 # TODO
                 raise NotImplementedError
@@ -177,8 +178,8 @@ def transform(motion, T, pivot=0, local=False):
         motion: Motion sequence to be transformed
         T: Transformation matrix of shape (4, 4) to be applied to poses of
             motion
-        pivot: Optional; The pivot frame number for the transformation. 
-            For example, if it is 0 and the transformation is pure rotation, 
+        pivot: Optional; The pivot frame number for the transformation.
+            For example, if it is 0 and the transformation is pure rotation,
             the entire motion rotates w.r.t. the first frame.
         local: Optional; Set local=True if the transformations are to be
             applied locally, relative to parent of each joint.
@@ -212,7 +213,7 @@ def translate(motion, v, pivot=0, local=False):
         motion: Motion sequence to be translated
         v: Array of shape (3,) indicating translation vector to be applied to
             all poses of motion sequence
-        pivot: Optional; The pivot frame number for the traslation. 
+        pivot: Optional; The pivot frame number for the traslation.
             In translation, it is only meaningful when local==True.
         local: Optional; Set local=True if the translation is to be applied
             locally, relative to root position.
@@ -227,8 +228,8 @@ def rotate(motion, R, pivot=0, local=False):
     Args:
         motion: Motion sequence to be rotated
         R: Array of shape (3, 3) indicating rotation matrix to be applied
-        pivot: Optional; The pivot frame number for the rotation. 
-            For example, if it is 0 then the entire motion rotates 
+        pivot: Optional; The pivot frame number for the rotation.
+            For example, if it is 0 then the entire motion rotates
             w.r.t. the first frame.
         local: Optional; Set local=True if the translation is to be applied
             locally, relative to root position.
@@ -299,3 +300,30 @@ def position_wrt_root(motion):
     # Subtract root position from all joint positions
     matrix = matrix - matrix[:, np.newaxis, 0]
     return matrix
+
+
+# SM)
+def transform_poses(poses, T, pivot=0, local=False):
+    """
+    poses version of transform ftn
+    - inplace
+    """
+    pose_pivot = poses[pivot]
+    T_root = pose_pivot.get_root_transform()
+    T_root_inv = math.invertT(T_root)
+    # Save the relative transform of each pose w.r.t. the pivot pose
+    T_rel_wrt_pivot = []
+    for pose_id in range(len(poses)):
+        T_rel = np.dot(T_root_inv, poses[pose_id].get_root_transform())
+        T_rel_wrt_pivot.append(T_rel)
+    # Transform the pivot pose
+    T_root_new = np.dot(T_root, T) if local else np.dot(T, T_root)
+    pose_pivot.set_root_transform(T_root_new, local=False)
+    # Transform the remaining poses by using the transformed pivot pose
+    for pose_id in range(len(poses)):
+        T_new = np.dot(T_root_new, T_rel_wrt_pivot[pose_id])
+        poses[pose_id].set_root_transform(T_new, local=False)
+    # Recompute velocities if exists
+    # if isinstance(motion, vel_class.MotionWithVelocity):
+    #     motion.compute_velocities()
+    return poses

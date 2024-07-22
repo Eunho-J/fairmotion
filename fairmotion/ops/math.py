@@ -23,7 +23,7 @@ def normalize(v):
         else:
             return norm_v
     else:
-        warnings.warn("!!!The length of input vector is almost zero!!!")
+        # warnings.warn("!!!The length of input vector is almost zero!!!")
         return v
 
 
@@ -32,9 +32,7 @@ def slerp(R1, R2, t):
     Spherical linear interpolation (https://en.wikipedia.org/wiki/Slerp)
     between R1 and R2 with parameter t, 0 ≤ t ≤ 1
     """
-    return np.dot(
-        R1, conversions.A2R(t * conversions.R2A(np.dot(R1.transpose(), R2)))
-    )
+    return np.dot(R1, conversions.A2R(t * conversions.R2A(np.dot(R1.transpose(), R2))))
 
 
 def lerp(v0, v1, t):
@@ -108,10 +106,23 @@ def project_rotation_1D(R, axis):
     """
     Project a 3D rotation matrix to the closest 1D rotation
     when a rotational axis is given
+    >>>>>>> CAUTION >>>>>>>
+    Quaternion is expressed in "xyzw" order as default in scipy.transform, thus identity is [0,0,0,1]
+    # verified by:
+    theta_0 = project_rotation_1D(constants.eye_R(), np.array([0,1,0]))         # must be 0
+    theta_y = project_rotation_1D(conversions.Ay2R(0.6), np.array([0,1,0]))     # must be 0.6
+    theta_z = project_rotation_1D(conversions.Az2R(0.6), np.array([0,0,1]))     # must be 0.6
     """
+
+    # Q, angle = quaternion.Q_closest(
+    #     conversions.R2Q(R), [1.0, 0.0, 0.0, 0.0], axis,
+    # )
     Q, angle = quaternion.Q_closest(
-        conversions.R2Q(R), [0.0, 0.0, 0.0, 1.0], axis,
+        conversions.R2Q(R),
+        [0.0, 0.0, 0.0, 1.0],
+        axis,
     )
+
     return angle
 
 
@@ -229,7 +240,7 @@ def lerp_from_paired_list(x, xy_pairs, clamp=True):
     elif x >= xN:
         return yN
     else:
-        """ Otherwise, return linearly interpolated values """
+        """Otherwise, return linearly interpolated values"""
         for i in range(len(xy_pairs) - 1):
             x1, y1 = xy_pairs[i]
             x2, y2 = xy_pairs[i + 1]
