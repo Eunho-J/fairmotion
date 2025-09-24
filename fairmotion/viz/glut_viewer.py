@@ -346,7 +346,12 @@ class Viewer:
 
         glutInitWindowSize(*self.window_size)
         glutInitWindowPosition(0, 0)
-
+        flags = GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH
+        try:
+            flags |= GLUT_3_2_CORE_PROFILE  # Apple GLUT에서만 존재
+        except NameError:
+            pass
+        glutInitDisplayMode(flags
         self.window = glutCreateWindow(self.title)
 
         # Init functions
