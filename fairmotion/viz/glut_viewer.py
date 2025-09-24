@@ -327,31 +327,18 @@ class Viewer:
     def run(self):
         # Init glut
         glutInit(())
+        
+        flags = GLUT_RGBA | GLUT_DOUBLE | GLUT_ALPHA | GLUT_DEPTH
         if self.use_msaa:
-            glutInitDisplayMode(
-                GLUT_RGBA
-                | GLUT_DOUBLE
-                | GLUT_ALPHA
-                | GLUT_DEPTH
-                # | GLUT_MULTISAMPLE
-            )
-        else:
-            glutInitDisplayMode(
-                GLUT_RGBA
-                | GLUT_DOUBLE
-                | GLUT_ALPHA
-                | GLUT_DEPTH
-                | GLUT_MULTISAMPLE  # SM) ON for better quality
-            )
-
-        glutInitWindowSize(*self.window_size)
-        glutInitWindowPosition(0, 0)
-        flags = GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH
+            flags |= GLUT_MULTISAMPLE
         try:
             flags |= GLUT_3_2_CORE_PROFILE  # Apple GLUT에서만 존재
         except NameError:
             pass
         glutInitDisplayMode(flags)
+
+        glutInitWindowSize(*self.window_size)
+        glutInitWindowPosition(0, 0)
         self.window = glutCreateWindow(self.title)
 
         # Init functions
