@@ -351,7 +351,7 @@ class Viewer:
             flags |= GLUT_3_2_CORE_PROFILE  # Apple GLUT에서만 존재
         except NameError:
             pass
-        glutInitDisplayMode(flags
+        glutInitDisplayMode(flags)
         self.window = glutCreateWindow(self.title)
 
         # Init functions
